@@ -1,0 +1,306 @@
+#!/home/marco/bin/AST/venv/bin/python
+
+import numpy as np
+import matplotlib.pyplot as pl
+from os import path
+import argparse
+import json
+import os
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from typing import List
+from matplotlib.gridspec import GridSpec
+
+
+class cd:
+    """
+    Directory changer. can change the directory using the 'with' keyword, and returns to the previous path
+    after leaving intendation. Example:
+
+    with cd("some/path/to/go"): # changing dir
+        foo()
+        ...
+        bar()
+    #back to old dir
+    """
+
+    def __init__(self, newPath):
+        self.newPath = os.path.expanduser(newPath)
+
+    def __enter__(self):
+        self.savedPath = os.getcwd()
+        os.chdir(self.newPath)
+
+    def __exit__(self, etype, value, traceback):
+        os.chdir(self.savedPath)
+
+
+def plot_parameters(psd_file):
+    n = 0
+    files = os.listdir(".")
+    for i in files:
+        if i.startswith("background_parameter"):
+            n += 1
+
+    labelx = ['w (ppm$^2$/$\mu$Hz)', '$\sigma_\mathrm{long}$ (ppm)', '$b_\mathrm{long}$ ($\mu$Hz)',
+              '$\sigma_\mathrm{gran,1}$ (ppm)',
+              '$b_\mathrm{gran,1}$ ($\mu$Hz)', '$\sigma_\mathrm{gran,2}$ (ppm)', '$b_\mathrm{gran,2}$ ($\mu$Hz)',
+              '$H_\mathrm{osc}$ (ppm$^2$/$\mu$Hz)', '$f_\mathrm{max}$ ($\mu$Hz)', '$\sigma_\mathrm{env}$ ($\mu$Hz)']
+
+    fig, ax_list = pl.subplots(2, 5, sharex=True, figsize=(18,10  ))
+    fig: Figure
+    ax_list: List[Axes]
+
+    for i in range(0, n  ):
+        x = 0 if i < 5 else 1
+        y = i if i < 5 else i-5
+
+        data = np.loadtxt(f"background_parameter{'%03d' % i}.txt").T
+        ax_list[x,y].plot(data,'o',markersize=1,c='k')
+        ax_list[x,y].set_xlabel(labelx[i])
+
+    fig.suptitle(psd_file)
+    pl.tight_layout()
+    try:
+        pl.draw()
+        pl.pause(1)
+        pl.waitforbuttonpress()
+        pl.close()
+    except:
+        pass
+
+
+def readBackground():
+    bckGrdFile = 'background_parameterSummary.txt'
+    backGroundParameters = np.loadtxt(bckGrdFile).T
+    par_median = backGroundParameters[1] #median values
+    par_le = backGroundParameters[4]     #lower credible limits
+    par_ue = backGroundParameters[5]     #upper credible limits
+    backGroundParameters = np.vstack((par_median,par_le,par_ue))
+    return backGroundParameters
+
+def creatingBackgroundModel(psd,nyq,backGroundParameters):
+    freq,psd = psd
+    par_median,par_le,par_ue = backGroundParameters
+    if len(par_median) >7:
+        hg     = par_median[7] # third last parameter
+        numax  = par_median[8] # second last parameter
+        sigma  = par_median[9] # last parameter
+
+        print("Height is '"+str(hg)+"'")
+        print("Numax is '"+str(numax)+"'")
+        print("Sigma is '"+str(sigma)+"'")
+
+    zeta = 2.*np.sqrt(2.)/np.pi # !DPI is the pigreca value in double precision
+    r = (np.sin(np.pi/2. * freq/nyq) / (np.pi/2. * freq/nyq))**2 #; responsivity (apodization) as a sinc^2
+    w = par_median[0] # White noise component
+    g=0
+    if len(par_median) >7:
+        g = hg * np.exp(-(numax-freq)**2/(2.*sigma**2))
+
+    ## Long-trend variations
+    sigma_long = par_median[1]
+    freq_long = par_median[2]
+    h_long = (sigma_long**2/freq_long) / (1. + (freq/freq_long)**4)
+
+    ## First granulation component
+    sigma_gran1 = par_median[3]
+    freq_gran1 = par_median[4]
+    h_gran1 = (sigma_gran1**2/freq_gran1) / (1. + (freq/freq_gran1)**4)
+
+    ## Second granulation component
+    sigma_gran2 = par_median[5]
+    freq_gran2 = par_median[6]
+    h_gran2 = (sigma_gran2**2/freq_gran2) / (1. + (freq/freq_gran2)**4)
+
+    ## Global background model
+    w = np.zeros_like(freq) + w
+    if len(par_median) >7:
+        return zeta * h_long * r, zeta * h_gran1 * r, zeta * h_gran2 * r, w, g * r
+    else:
+        return zeta * h_long * r, zeta * h_gran1 * r, zeta * h_gran2 * r, w
+
+def plot_background(psd_file):
+    psd = np.loadtxt(f"../../../data/{psd_file}.txt").T
+    nyq = max(psd[0])
+
+    fig :Figure = pl.figure(figsize=(20,12))
+
+    try:
+        bg = readBackground()
+    except OSError:
+        bg = None
+
+    if bg is not None:
+        gs = GridSpec(3, 5, height_ratios=[3, 1, 1])
+        ax_psd = fig.add_subplot(gs[0, :])
+
+        ax_psd.loglog(psd[0], psd[1], color='k', linewidth=1)
+        ax_psd.set_xlabel(r'Frequency [$\mu$Hz]')
+        ax_psd.set_ylabel(r'PSD [ppm$^2$/$\mu$Hz]')
+        fig.suptitle(psd_file)
+
+        bg_model = creatingBackgroundModel(psd,nyq,bg)
+        ax_psd.plot(psd[0],bg_model[0], color='b', linewidth=1, linestyle='--')
+        ax_psd.plot(psd[0],bg_model[1], color='b', linewidth=1, linestyle='--')
+        ax_psd.plot(psd[0],bg_model[2], color='b', linewidth=1, linestyle='--')
+        ax_psd.plot(psd[0], bg_model[3], color='y', linewidth=1, linestyle=':')
+        if len(bg_model) > 4:
+            pl.plot(psd[0],bg_model[4],'b', color='c', linewidth=1, linestyle=':')
+
+        withoutGaussianBackground = np.sum(bg_model[0:4], axis=0)
+        fullBackground = np.sum(bg_model, axis=0)
+        ax_psd.plot(psd[0], fullBackground, color='r', linewidth=1, linestyle='-')
+        ax_psd.plot(psd[0], withoutGaussianBackground, color='r', linewidth=1, linestyle='-')
+        ax_psd.set_xlim(0.1, max(psd[0]))
+        ax_psd.set_ylim(min(psd[1] * 0.95), max(psd[1]) * 1.2)
+
+
+        n = 10 if len(bg_model) > 4  else 7
+
+        labelx = ['w (ppm$^2$/$\mu$Hz)', '$\sigma_\mathrm{long}$ (ppm)', '$b_\mathrm{long}$ ($\mu$Hz)',
+                  '$\sigma_\mathrm{gran,1}$ (ppm)',
+                  '$b_\mathrm{gran,1}$ ($\mu$Hz)', '$\sigma_\mathrm{gran,2}$ (ppm)', '$b_\mathrm{gran,2}$ ($\mu$Hz)',
+                  '$H_\mathrm{osc}$ (ppm$^2$/$\mu$Hz)', '$f_\mathrm{max}$ ($\mu$Hz)', '$\sigma_\mathrm{env}$ ($\mu$Hz)']
+
+        for i in range(0, n):
+            x = 1 if i < 5 else 2
+            y = i if i < 5 else i - 5
+            par, marg = np.loadtxt(f"background_marginalDistribution{'%03d' % i}.txt").T
+
+            ax : Axes = fig.add_subplot(gs[x,y])
+
+            par_err_le = bg[0][i] - bg[1][i]
+            par_err_ue = bg[2][i] - bg[0][i]
+            par_err = (par_err_le ** 2 + par_err_ue ** 2) ** (0.5) / 2 ** (0.5)
+            ax.set_xlim([bg[0][i]  - 5 * par_err, bg[0][i]  + 5 * par_err])
+            ax.set_ylim([0, max(marg) * 1.2])
+            ax.plot(par, marg, linewidth=1, c='k')
+            ax.fill_between(par[(par >= bg[1][i]) & (par <= bg[2][i])],
+                            marg[(par >= bg[1][i]) & (par <= bg[2][i])], 0, alpha=0.5, facecolor='forestgreen')
+            ax.axvline(bg[0][i], c='r',linewidth=1)
+            ax.set_xlabel(labelx[i])
+    else:
+        print("Cannot find the summary file. Only plotting PSD!")
+        gs = GridSpec(1, 5, height_ratios=[1])
+        ax_psd = fig.add_subplot(gs[0, :])
+
+        ax_psd.loglog(psd[0], psd[1], color='k', linewidth=1)
+        ax_psd.set_xlabel(r'Frequency [$\mu$Hz]')
+        ax_psd.set_ylabel(r'PSD [ppm$^2$/$\mu$Hz]')
+        fig.suptitle(psd_file)
+
+
+    pl.tight_layout()
+    fig.subplots_adjust(wspace=0)
+    try:
+        pl.draw()
+        pl.pause(1)
+        pl.waitforbuttonpress()
+        pl.close()
+    except:
+        pass
+
+
+pl.rc('font', family='serif')
+pl.rc('xtick', labelsize='x-small')
+pl.rc('ytick', labelsize='x-small')
+
+str_bg_path = "Background Path"
+
+parser = argparse.ArgumentParser(description="")
+parser.add_argument('run_nr', type=int, help="Number of run")
+parser.add_argument('-cp', '--changeBackgroundPath', action='store_true')
+parser.add_argument('-r', '--runNumber', type=str, default=None)
+parser.add_argument('-p', '--showParameters', action='store_true')
+args = parser.parse_args()
+
+file_path = path.dirname(path.realpath(__file__)) + "/conf.json"
+
+conf_file_exists = path.isfile(file_path)
+
+if conf_file_exists:
+    with open(file_path, 'r') as f:
+        conf = json.load(f)
+
+if args.changeBackgroundPath or not conf_file_exists or str_bg_path not in conf.keys():
+    bg_path = ""
+    while not path.exists(bg_path):
+        bg_path = input("Please enter the path for the Background folder:\n")
+
+    if not conf_file_exists:
+        conf = {str_bg_path: bg_path}
+        with open(file_path, 'w') as f:
+            json.dump(conf, f)
+else:
+    bg_path = conf[str_bg_path]
+
+with cd(bg_path):
+    dirs = os.listdir("results")
+    res_dir = []
+    for dir in dirs:
+        if str(args.run_nr) in dir:
+            res_dir.append(dir)
+
+    if len(res_dir) > 1:
+        done = False
+
+        while not done:
+            ind = input(f"Multiple directories where found. Please choose a number:\n {[f'{i}:{val}' for i, val in enumerate(res_dir)]}")
+            try:
+                ind = int(ind)
+                if ind not in range(0, len(res_dir) - 1):
+                    raise ValueError
+                done = True
+            except ValueError:
+                pass
+
+        dir = res_dir[ind]
+    elif len(res_dir) == 0:
+        done = False
+
+        while not done:
+            ind = input(f"No directory with {args.run_nr} was found. Choose a number:\n {[f'{i}:{val}' for i, val in enumerate(dirs)]}")
+            try:
+                ind = int(ind)
+                if ind not in range(0, len(res_dir) - 1):
+                    raise ValueError
+                done = True
+            except ValueError:
+                pass
+
+        dir = dirs[ind]
+    else:
+        dir = res_dir[0]
+
+    dirs = []
+    for i in os.listdir(f"results/{dir}"):
+        if os.path.isdir(f"results/{dir}/{i}"):
+            dirs.append(i)
+
+    if args.runNumber is not None and args.runNumber in dirs:
+        identifier = dir
+        dir = f"results/{dir}/{args.runNumber}"
+    else:
+        done = False
+        while not done:
+            if args.runNumber is not None:
+                ind = input(f"{args.runNumber} was not found in {dir}. Please choose a number:\n{[f'{i}:{val}' for i, val in enumerate(dirs)]}\n")
+            else:
+                ind = input(
+                    f"Please choose a number:\n{[f'{i}:{val}' for i, val in enumerate(dirs)]}\n")
+            try:
+                ind = int(ind)
+                if ind not in range(0, len(dirs)):
+                    raise ValueError
+                done = True
+            except ValueError:
+                pass
+        identifier = dir
+        dir = f"results/{dir}/{dirs[ind]}"
+
+    with cd(dir):
+        if args.showParameters:
+            plot_parameters(identifier)
+        else:
+            plot_background(identifier)
