@@ -1,4 +1,4 @@
-#!/home/marco/bin/AST/venv/bin/python
+#!/usr/bin/env python3
 
 import numpy as np
 import matplotlib.pyplot as pl
@@ -39,9 +39,12 @@ pl.yscale(args.yscale)
 pl.title(args.file)
 pl.tight_layout()
 try:
-    pl.draw()
-    pl.pause(1)
-    pl.waitforbuttonpress()
-    pl.close()
+    def quit_figure(event):
+        if event.key == 'q':
+            pl.close(event.canvas.figure)
+
+
+    cid = pl.gcf().canvas.mpl_connect('key_press_event', quit_figure)
+    pl.show()
 except:
     pass

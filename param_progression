@@ -1,4 +1,4 @@
-#!/home/marco/bin/AST/venv/bin/python
+#!/usr/bin/env python3
 
 import numpy as np
 import matplotlib.pyplot as pl
@@ -61,13 +61,6 @@ def plot_parameters(psd_file):
 
     fig.suptitle(psd_file)
     pl.tight_layout()
-    try:
-        pl.draw()
-        pl.pause(1)
-        pl.waitforbuttonpress()
-        pl.close()
-    except:
-        pass
 
 
 def readBackground():
@@ -193,13 +186,6 @@ def plot_background(psd_file):
 
     pl.tight_layout()
     fig.subplots_adjust(wspace=0)
-    try:
-        pl.draw()
-        pl.pause(1)
-        pl.waitforbuttonpress()
-        pl.close()
-    except:
-        pass
 
 
 pl.rc('font', family='serif')
@@ -209,7 +195,7 @@ pl.rc('ytick', labelsize='x-small')
 str_bg_path = "Background Path"
 
 parser = argparse.ArgumentParser(description="")
-parser.add_argument('run_nr', type=int, help="Number of run")
+parser.add_argument('run_nr', type=str, help="Number of run")
 parser.add_argument('-cp', '--changeBackgroundPath', action='store_true')
 parser.add_argument('-r', '--runNumber', type=str, default=None)
 parser.add_argument('-p', '--showParameters', action='store_true')
@@ -304,3 +290,14 @@ with cd(bg_path):
             plot_parameters(identifier)
         else:
             plot_background(identifier)
+
+    try:
+        def quit_figure(event):
+            if event.key == 'q':
+                pl.close(event.canvas.figure)
+
+
+        cid = pl.gcf().canvas.mpl_connect('key_press_event', quit_figure)
+        pl.show()
+    except:
+        pass
