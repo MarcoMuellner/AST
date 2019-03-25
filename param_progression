@@ -187,20 +187,20 @@ if conf_file_exists:
     with open(file_path, 'r') as f:
         conf = json.load(f)
 
-    if args.changeBackgroundPath or not conf_file_exists or str_bg_path not in conf.keys():
-        bg_path = ""
-        while not path.exists(bg_path):
-            bg_path = input("Please enter the path for the Background folder:\n")
+if args.changeBackgroundPath or not conf_file_exists or str_bg_path not in conf.keys():
+    bg_path = ""
+    while not path.exists(bg_path):
+        bg_path = input("Please enter the path for the Background folder:\n")
 
-        if not conf_file_exists:
-            conf = {str_bg_path: bg_path}
-        else:
-            conf[str_bg_path] = bg_path
-
-        with open(file_path, 'w') as f:
-            json.dump(conf, f)
+    if not conf_file_exists:
+        conf = {str_bg_path: bg_path}
     else:
-        bg_path = conf[str_bg_path]
+        conf[str_bg_path] = bg_path
+
+    with open(file_path, 'w') as f:
+        json.dump(conf, f)
+else:
+    bg_path = conf[str_bg_path]
 
 with cd(bg_path):
     dirs = os.listdir("results")
