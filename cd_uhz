@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+import argparse
+parser = argparse.ArgumentParser(description="")
+parser.add_argument('value', type=str, help="Please enter the value (add c/d or uHz for direction",nargs=2)
+args = parser.parse_args()
+
+cd_to_uHz = "c/d" in args.value[1]
+value = float(args.value[0])
+
+if cd_to_uHz:
+    print(f"{'%.2f'%(value *10**6/(24*3600))} uHz")
+else:
+    print(f"{'%.2f'%(value * (24 * 3600)/10**6)} c/d")

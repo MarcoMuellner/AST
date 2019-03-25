@@ -10,29 +10,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from typing import List
 from matplotlib.gridspec import GridSpec
-
-
-class cd:
-    """
-    Directory changer. can change the directory using the 'with' keyword, and returns to the previous path
-    after leaving intendation. Example:
-
-    with cd("some/path/to/go"): # changing dir
-        foo()
-        ...
-        bar()
-    #back to old dir
-    """
-
-    def __init__(self, newPath):
-        self.newPath = os.path.expanduser(newPath)
-
-    def __enter__(self):
-        self.savedPath = os.getcwd()
-        os.chdir(self.newPath)
-
-    def __exit__(self, etype, value, traceback):
-        os.chdir(self.savedPath)
+from helper import cd
 
 
 def plot_parameters(psd_file):
@@ -209,17 +187,20 @@ if conf_file_exists:
     with open(file_path, 'r') as f:
         conf = json.load(f)
 
-if args.changeBackgroundPath or not conf_file_exists or str_bg_path not in conf.keys():
-    bg_path = ""
-    while not path.exists(bg_path):
-        bg_path = input("Please enter the path for the Background folder:\n")
+    if args.changeBackgroundPath or not conf_file_exists or str_bg_path not in conf.keys():
+        bg_path = ""
+        while not path.exists(bg_path):
+            bg_path = input("Please enter the path for the Background folder:\n")
 
-    if not conf_file_exists:
-        conf = {str_bg_path: bg_path}
+        if not conf_file_exists:
+            conf = {str_bg_path: bg_path}
+        else:
+            conf[str_bg_path] = bg_path
+
         with open(file_path, 'w') as f:
             json.dump(conf, f)
-else:
-    bg_path = conf[str_bg_path]
+    else:
+        bg_path = conf[str_bg_path]
 
 with cd(bg_path):
     dirs = os.listdir("results")

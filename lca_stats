@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+
+import numpy as np
+import matplotlib.pyplot as pl
+import argparse
+from os import path
+import json
+from helper import *
+import os
+import sys
+from uncertainties import ufloat_fromstr
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
+
+def background_model(psd: np.ndarray, nyq: float, w: float, sigma_long: float, freq_long: float,
+                     sigma_gran1: float, freq_gran1: float,
+                     sigma_gran2: float, freq_gran2: float, nu_max: float = None, amp: float = None,
+                     sigma: float = None):
+    '''
+    Creates a full Background model
+    :return: Background Model
+    '''
+    if nu_max is not None and amp is not None and sigma is not None:
+        g = amp * np.exp(-(nu_max - psd[0]) ** 2 / (2. * sigma ** 2))  ## Gaussian envelope
+    else:
+        g = 0
+
+    zeta = 2. * np.sqrt(2.) / np.pi  # !DPI is the pigreca value in double precision
+    r = (np.sin(np.pi / 2. * psd[0] / nyq) / (
+                np.pi / 2. * psd[0] / nyq)) ** 2  # ; responsivity (apodization) as a sinc^2
+
+    ## Long-trend variations
+    h_long = (sigma_long ** 2 / freq_long) / (1. + (psd[0] / freq_long) ** 4)
+
+    ## First granulation component
+    h_gran1 = (sigma_gran1 ** 2 / freq_gran1) / (1. + (psd[0] / freq_gran1) ** 4)
+
+    ## Second granulation component
+    h_gran2 = (sigma_gran2 ** 2 / freq_gran2) / (1. + (psd[0] / freq_gran2) ** 4)
+
+    ## Global background model
+    w = np.zeros_like(psd[0]) + w
+    if nu_max is not None and amp is not None and sigma is not None:
+        retVal = zeta * h_long * r, zeta * h_gran1 * r, zeta * h_gran2 * r, w, g * r
+    else:
+        retVal = zeta * h_long * r, zeta * h_gran1 * r, zeta * h_gran2 * r, w
+
+    return retVal
+
+def plot_f_space(ax : Axes, f_data : np.ndarray,bg_model):
+    ax.loglog(f_data[0], f_data[1], linewidth=1, color='k')
+
+    ax.set_ylabel(r'PSD [ppm$^2$/$\mu$Hz]')
+    ax.set_xlabel(r'Frequency [$\mu$Hz]')
+
+    if bg_model is not None:
+        ax.loglog(f_data[0], bg_model[0], color='b', linewidth=1, linestyle='--')  # harvey 1
+        ax.loglog(f_data[0], bg_model[1], color='b', linewidth=1, linestyle='--')  # harvey 2
+        ax.loglog(f_data[0], bg_model[2], color='b', linewidth=1, linestyle='--')  # harvey 3
+        ax.loglog(f_data[0], bg_model[3], color='y', linewidth=1, linestyle=':')  # noise
+        ax.loglog(f_data[0], np.sum(bg_model[0:4], axis=0), color='r', linewidth=1, linestyle='-')  # without Powerexcess
+        if len(bg_model) == 5:
+            ax.loglog(f_data[0], bg_model[4], color='c', linewidth=1, linestyle=':')  # power
+            ax.loglog(f_data[0], np.sum(bg_model, axis=0), color='r', linewidth=1, linestyle='-')  # with Powerexcess
+
+    ax.set_xlim(min(f_data[0]), max(f_data[0]))
+    ax.set_ylim(min(f_data[1][f_data[1] > 0] * 0.95), max(f_data[1]) * 1.2)
+
+def single_plot(path, result, conf):
+    psd = np.load(f"{path}/psd.npy").T
+    kic_id = conf["KIC ID"]
+    print(kic_id)
+
+    fit_res_full = result["Full Background result"]
+    fit_res_noise = result["Noise Background result"]
+
+    nu_max = get_val(result[full_background], f_max)
+    f_guess = result["Nu max guess"]
+    for key, value in fit_res_full.items():
+        fit_res_full[key] = ufloat_fromstr(value).nominal_value
+
+    for key, value in fit_res_noise.items():
+        fit_res_noise[key] = ufloat_fromstr(value).nominal_value
+
+    nyq = max(psd[0])
+
+    print(nyq)
+
+    full_model = background_model(psd, nyq, fit_res_full['w'], fit_res_full["$\\sigma_\\mathrm{long}$"],
+                                  fit_res_full["$b_\\mathrm{long}$"],
+                                  fit_res_full["$\\sigma_\\mathrm{gran,1}$"], fit_res_full["$b_\\mathrm{gran,1}$"],
+                                  fit_res_full["$\\sigma_\\mathrm{gran,2}$"],
+                                  fit_res_full["$b_\\mathrm{gran,2}$"], fit_res_full["$f_\\mathrm{max}$ "],
+                                  fit_res_full["$H_\\mathrm{osc}$"],
+                                  fit_res_full["$\\sigma_\\mathrm{env}$"])
+
+    noise_model = background_model(psd, nyq, fit_res_noise['w'], fit_res_noise["$\\sigma_\\mathrm{long}$"],
+                                   fit_res_noise["$b_\\mathrm{long}$"],
+                                   fit_res_noise["$\\sigma_\\mathrm{gran,1}$"],
+                                   fit_res_noise["$b_\\mathrm{gran,1}$"],
+                                   fit_res_noise["$\\sigma_\\mathrm{gran,2}$"],
+                                   fit_res_noise["$b_\\mathrm{gran,2}$"])
+
+    fig: Figure = pl.figure(figsize=(25, 8))
+
+    fig.subplots_adjust(hspace=0)
+    gs = GridSpec(1, 3, width_ratios=[3, 3, 1])
+
+    ax_full: Axes = fig.add_subplot(gs[0, 0])
+    ax_bg: Axes = fig.add_subplot(gs[0, 1], sharex=ax_full)
+    ax_text: Axes = fig.add_subplot(gs[0, 2])
+
+    ax_full.tick_params(
+        axis='x',  # changes apply to the x-axis
+        which='both',  # both major and minor ticks are affected
+        bottom=False,  # ticks along the bottom edge are off
+        top=False,  # ticks along the top edge are off
+        labelbottom=False)
+
+    plot_f_space(ax_full, psd, full_model)
+    plot_f_space(ax_bg, psd, noise_model)
+
+    ax_full.set_title("Full BG Model")
+    ax_bg.set_title("Noise Model")
+
+    pl.tight_layout()
+    fig.subplots_adjust(wspace=0)
+
+    if "Literature value nu max" in conf.keys():
+        f_lit = conf["Literature value nu max"]
+    else:
+        f_lit = np.nan
+    bayes_factor = get_val(result, "Bayes factor")
+
+    text = fr"$\nu_\mathrm{{max,LCA}}$={nu_max}$\mu$Hz" + "\n" + fr"$\nu_\mathrm{{max,lit}}$={f_lit}$\mu$Hz" + "\n" + fr"$\nu_\mathrm{{max,guess}}$={'%.2f' % f_guess}$\mu$Hz" + "\n" + fr"Bayes factor: {bayes_factor}"
+    ax_text.text(0, 0.5, text, fontsize=16)
+
+    fig.suptitle(kic_id)
+
+    pl.show()
+    pl.close(fig)
+
+
+pl.rc('font', family='serif')
+pl.rc('xtick', labelsize='x-small')
+pl.rc('ytick', labelsize='x-small')
+
+str_lca_path = "LCA path"
+str_results = "Path for results"
+
+parser = argparse.ArgumentParser(description="")
+parser.add_argument('run_name', type=str, help="Name of the run (filename, without .json)")
+parser.add_argument('-cp', '--changeLCAPath', action='store_true')
+parser.add_argument('-si', '--showIgnored', action='store_true')
+parser.add_argument('-ov','--showOverview',action='store_true')
+args = parser.parse_args()
+
+file_path = path.dirname(path.realpath(__file__)) + "/conf.json"
+
+conf_file_exists = path.isfile(file_path)
+
+if conf_file_exists:
+    with open(file_path, 'r') as f:
+        conf = json.load(f)
+
+if args.changeLCAPath or not conf_file_exists or str_lca_path not in conf.keys():
+    lca_path = ""
+    while not path.exists(lca_path):
+        lca_path = input("Please enter the path for the LCA folder:\n")
+
+    if not conf_file_exists:
+        conf = {str_lca_path: lca_path}
+    else:
+        conf[str_lca_path] = lca_path
+
+
+    with open(file_path, 'w') as f:
+        json.dump(conf, f)
+else:
+    lca_path = conf[str_lca_path]
+
+with cd(lca_path):
+    run_files = os.listdir("run_cfg")
+
+    file_name = args.run_name.split(".")[0]
+    if file_name + ".json" not in run_files:
+        done = False
+
+        while not done:
+            ind = input(f"No file with {args.run_name} was found. Choose a number:\n {[f'{i}:{val}' for i, val in enumerate(run_files)]}")
+            try:
+                ind = int(ind)
+                if ind not in range(0, len(run_files) - 1):
+                    raise ValueError
+                done = True
+            except ValueError:
+                pass
+
+        run_file = run_files[ind]
+    else:
+        run_file = file_name + ".json"
+
+    with open(f"run_cfg/{file_name}.json",'r') as f:
+        conf = json.load(f)
+    results = load_results(f"results/{conf['General'][str_results].split('/')[-2]}",ignore_ignore=args.showIgnored)
+
+
+
+    if len(results) == 0:
+        print(f"No results were found for {args.run_name}")
+        sys.exit()
+
+    data = {}
+
+    for path, result, conf in results:
+        if not args.showOverview:
+            single_plot(path, result, conf)
+
