@@ -154,6 +154,7 @@ parser.add_argument('run_name', type=str, help="Name of the run (filename, witho
 parser.add_argument('-cp', '--changeLCAPath', action='store_true')
 parser.add_argument('-si', '--showIgnored', action='store_true')
 parser.add_argument('-ov','--showOverview',action='store_true')
+parser.add_argument('-s','--specific',default=None,type=int)
 args = parser.parse_args()
 
 file_path = path.dirname(path.realpath(__file__)) + "/conf.json"
@@ -166,6 +167,7 @@ if conf_file_exists:
 
 if args.changeLCAPath or not conf_file_exists or str_lca_path not in conf.keys():
     lca_path = ""
+
     while not path.exists(lca_path):
         lca_path = input("Please enter the path for the LCA folder:\n")
 
@@ -214,6 +216,9 @@ with cd(lca_path):
     data = {}
 
     for path, result, conf in results:
+        if args.specific is not None:
+            if conf["KIC ID"] != args.specific:
+                continue
         if not args.showOverview:
             single_plot(path, result, conf)
 
